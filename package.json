@@ -3,8 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test triage/test/rules.test.js triage/test/worker.test.js",
-    "deploy:triage": "wrangler deploy -c triage/wrangler.jsonc"
+    "test": "node --test triage/test/rules.test.js triage/test/worker.test.js sync/test/sim.test.js",
+    "deploy:triage": "wrangler deploy -c triage/wrangler.jsonc",
+    "build:sync": "cp sync/src/sim.js sync/assets/sim.js.txt",
+    "deploy:sync": "npm run build:sync && wrangler deploy -c sync/wrangler.jsonc"
   },
   "devDependencies": {
     "wrangler": "^4.40.0"

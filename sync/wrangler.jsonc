@@ -1,0 +1,10 @@
+{
+  // Store↔ERP Sync, Running — Veldway reference design as a live simulation.
+  // Free plan only: static assets from the worker, no KV, no AI, no state.
+  "name": "veldway-demo-sync",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "rules": [
+    { "type": "Text", "globs": ["**/*.txt"], "fallthrough": true }
+  ]
+}
