@@ -1,0 +1,15 @@
+{
+  // Lead Triage, Live — Veldway internal-build demo.
+  // Free plan only: Workers AI free allocation (fails closed past 10k neurons/day),
+  // KV free tier for anonymous counters. No routes/custom domains — workers.dev URL.
+  "name": "veldway-demo-triage",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "ai": { "binding": "AI" },
+  "kv_namespaces": [
+    { "binding": "RATE", "id": "61a3aed47457485c9b4f4cea900534c9" }
+  ],
+  "vars": {
+    "DAILY_CAP": "150"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "veldway-live-demos",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test triage/test/rules.test.js triage/test/worker.test.js",
+    "deploy:triage": "wrangler deploy -c triage/wrangler.jsonc"
+  },
+  "devDependencies": {
+    "wrangler": "^4.40.0"
+  }
+}
