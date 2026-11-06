@@ -31,7 +31,8 @@ textarea{min-height:110px;resize:vertical}
 .reasons{margin:10px 0 0;padding-left:18px;color:var(--soft);font-size:14.5px}
 .inj{margin-top:10px;border:1px solid var(--bad);background:#fbe8ee;color:var(--bad);border-radius:8px;padding:9px 12px;font-size:14px}
 h3{font-size:13px;font-family:ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin:0 0 6px}
-.prose{white-space:pre-wrap;color:var(--ink);font-size:15px}
+.prose{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink);font-size:15px}
+.reasons li{overflow-wrap:anywhere}
 .tag{display:inline-block;margin-top:9px;font-family:ui-monospace,monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--warn);border:1px solid var(--warn);border-radius:6px;padding:2px 8px}
 .engine{font-family:ui-monospace,monospace;font-size:12.5px;color:var(--faint)}
 .honest{border-top:1px solid var(--line);margin-top:28px;padding-top:16px;font-size:13.5px;color:var(--soft)}

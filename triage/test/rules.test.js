@@ -68,3 +68,11 @@ test("buildPrompt pins the verdict and carries the lead fields", () => {
   assert.ok(p.includes("never change the given score"));
   assert.ok(p.includes(lead.message.slice(0, 20)));
 });
+
+test("splitAnswer handles REPLY: with the text starting on the next line (observed live)", () => {
+  const observed = 'SUMMARY: T from C is inquiring about Klaviyo flows, no urgency.\n\nREPLY: \n"Hi T, thank you for reaching out. Can you share more details?"';
+  const { summary, reply } = splitAnswer(observed);
+  assert.match(summary, /^T from C is inquiring/);
+  assert.ok(!summary.includes("thank you for reaching out"), "reply text must not leak into summary");
+  assert.match(reply, /thank you for reaching out/);
+});

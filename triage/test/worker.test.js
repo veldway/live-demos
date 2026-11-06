@@ -137,3 +137,13 @@ test("reserveModelCall increments the day counter it read", async () => {
   const dayPut = calls.puts.find((p) => p.key === "day:2026-11-07");
   assert.equal(dayPut.value, "8");
 });
+
+test("chat.completions answer shape is parsed too", async () => {
+  const { env } = fakeEnv();
+  env.AI.run = async () => ({
+    choices: [{ message: { content: "SUMMARY: Chat-shape works.\nREPLY: Hello from v2." } }],
+  });
+  const { payload } = await triageRequest(HOT, env, "1.2.3.4");
+  assert.equal(payload.summary, "Chat-shape works.");
+  assert.match(payload.engine, /\(live\)/);
+});

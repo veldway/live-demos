@@ -27,20 +27,28 @@ SUMMARY: ...
 REPLY: ...`;
 }
 
-/** Split a model answer into {summary, reply} — same line rules as the Python _split. */
+/**
+ * Split a model answer into {summary, reply}. Tracks which section a line
+ * belongs to explicitly, so "REPLY:" with the text starting on the NEXT line
+ * still parses (observed live with Llama; the Python original's falsy-empty
+ * check mis-files that shape into the summary).
+ */
 export function splitAnswer(text) {
   let summary = "";
   let reply = "";
+  let mode = null;
   for (const part of String(text).split("\n")) {
     const stripped = part.trim();
     if (stripped.toUpperCase().startsWith("SUMMARY:")) {
       summary = stripped.slice(8).trim();
+      mode = "summary";
     } else if (stripped.toUpperCase().startsWith("REPLY:")) {
       reply = stripped.slice(6).trim();
-    } else if (reply) {
-      reply += " " + stripped;
-    } else if (summary && stripped) {
-      summary += " " + stripped;
+      mode = "reply";
+    } else if (stripped && mode === "reply") {
+      reply += (reply ? " " : "") + stripped;
+    } else if (stripped && mode === "summary") {
+      summary += (summary ? " " : "") + stripped;
     }
   }
   return { summary: summary.trim(), reply: reply.trim() };

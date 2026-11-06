@@ -15,7 +15,7 @@ import { triage, InputError } from "./rules.js";
 import { buildPrompt, splitAnswer, fallbackProse } from "./prose.js";
 import { HTML, CSS, APP_JS } from "./page.js";
 
-const MODEL = "@cf/meta/llama-3.1-8b-instruct";
+const MODEL = "@cf/meta/llama-3.1-8b-fast-v2";
 const LIMITS = { message: 1500, name: 80, company: 80 };
 const SOURCES = new Set(["contact-form", "website", "referral", "partner", "other"]);
 const PER_IP_PER_MINUTE = 4;
@@ -116,15 +116,24 @@ export async function triageRequest(body, env, ip, now = new Date()) {
           timer = setTimeout(() => reject(new Error("model timeout")), MODEL_TIMEOUT_MS);
         }),
       ]).finally(() => clearTimeout(timer));
-      const { summary, reply } = splitAnswer(result && result.response ? result.response : "");
+      // Workers AI models answer in one of two shapes: legacy {response: "..."}
+      // or OpenAI-style chat.completions {choices:[{message:{content}}]}.
+      const text =
+        (result && result.response) ||
+        (result && result.choices && result.choices[0] && result.choices[0].message
+          ? result.choices[0].message.content
+          : "") ||
+        "";
+      const { summary, reply } = splitAnswer(text);
       if (summary && reply) {
         return {
           status: 200,
           payload: { verdict, summary, reply, engine: `workers-ai ${MODEL} (live)` },
         };
       }
-    } catch {
+    } catch (err) {
       // fall through to deterministic — never fail the demo on a model problem
+      console.error("AI error:", String(err && err.message ? err.message : err));
     }
   }
   const fb = fallbackProse(lead, verdict);
@@ -141,7 +150,7 @@ export async function triageRequest(body, env, ip, now = new Date()) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (request.method === "GET") {
+    if (request.method === "GET" || request.method === "HEAD") {
       if (url.pathname === "/") return respond(HTML, "text/html; charset=utf-8");
       if (url.pathname === "/style.css") return respond(CSS, "text/css; charset=utf-8");
       if (url.pathname === "/app.js") return respond(APP_JS, "text/javascript; charset=utf-8");
