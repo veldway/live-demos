@@ -64,7 +64,7 @@ $("form").addEventListener("submit", async (e)=>{
     const ul=$("reasons"); ul.textContent="";
     for(const r of v.reasons){ const li=document.createElement("li"); li.textContent=r; ul.appendChild(li); }
     if(!v.reasons.length){ const li=document.createElement("li"); li.textContent="no rule signals fired"; ul.appendChild(li); }
-    $("inj").style.display = v.injection_suspected ? "block" : "none";
+    $("inj").hidden = !v.injection_suspected;
     $("summary").textContent=data.summary;
     $("reply").textContent=data.reply;
     $("engine").textContent="prose engine: "+data.engine;
@@ -126,7 +126,7 @@ export const HTML = `<!doctype html>
     <h3>Rule verdict (computed before any model runs)</h3>
     <span class="badge" id="badge"></span><span class="score" id="score"></span>
     <ul class="reasons" id="reasons"></ul>
-    <div class="inj" id="inj" style="display:none">Prompt-injection phrasing detected — this message is quarantined and its text is never sent to a model.</div>
+    <div class="inj" id="inj" hidden>Prompt-injection phrasing detected — this message is quarantined and its text is never sent to a model.</div>
   </div>
   <div class="card">
     <h3>Summary</h3>

@@ -26,6 +26,7 @@ h1{font-size:clamp(1.5rem,4vw,2.1rem);line-height:1.12;margin:0 0 8px}
 .grid{display:grid;gap:14px;grid-template-columns:1fr}
 @media(min-width:830px){.grid{grid-template-columns:minmax(0,1fr) minmax(0,1.4fr)}}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;min-width:0}
+h3.spaced{margin-top:14px}
 h3{font-size:12px;font-family:ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin:0 0 8px}
 table{width:100%;border-collapse:collapse;font-size:13.5px}
 th{font-family:ui-monospace,monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);text-align:left;padding:4px 6px;border-bottom:1px solid var(--line)}
@@ -84,7 +85,7 @@ export const HTML = `<!doctype html>
       <thead><tr><th>SKU</th><th>ERP</th><th>Store</th><th>State</th></tr></thead>
       <tbody id="stock"></tbody>
     </table>
-    <h3 style="margin-top:14px">Last reconciliation</h3>
+    <h3 class="spaced">Last reconciliation</h3>
     <p class="report" id="report">not run yet — it's the nightly safety net, not the mechanism</p>
   </div>
   <div class="card">
