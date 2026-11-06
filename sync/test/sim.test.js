@@ -159,3 +159,131 @@ test("inFlight is empty once the queue drains", () => {
   const s = drain(sim);
   assert.deepEqual(s.inFlight, []);
 });
+
+// The oversell claims are checked against a ledger kept OUTSIDE the engine: units a shopper
+// was allowed to buy per SKU, against units that ever existed (40 + deliveries). The engine's
+// own counter is asserted separately, so a bug in how it counts can't hide a real oversell.
+function ledger() {
+  const supply = Object.fromEntries(SKUS.map((s) => [s, 40]));
+  const sold = Object.fromEntries(SKUS.map((s) => [s, 0]));
+  // Checked at the moment each sale is accepted: a later delivery must not cover up a unit
+  // that was sold before it existed.
+  const violations = [];
+  return {
+    supply,
+    sold,
+    order(sim, sku) {
+      const ev = sim.customerOrder(sku);
+      if (ev) {
+        sold[ev.sku] += 1;
+        if (sold[ev.sku] > supply[ev.sku]) violations.push(`${ev.sku}: ${sold[ev.sku]} sold of ${supply[ev.sku]}`);
+      }
+      return ev;
+    },
+    deliver(sim, units) {
+      sim.bulkDelivery(units);
+      const per = Math.max(1, Math.round(units / SKUS.length));
+      for (const s of SKUS) supply[s] += per;
+    },
+    oversold() {
+      return violations;
+    },
+  };
+}
+
+test("orders still queued after an outage are not offered again (no oversell on recovery)", () => {
+  // Bring one SKU down to 2 units, take the ERP down, sell both units at different ticks (so
+  // they retry on different schedules), then keep buying whenever the store shows stock.
+  const sim = createSim(1);
+  const L = ledger();
+  for (let i = 0; i < 38; i++) L.order(sim, "TENT-2P");
+  drain(sim);
+  sim.setErpDown(20);
+  L.order(sim, "TENT-2P");
+  for (let i = 0; i < 3; i++) sim.tick();
+  L.order(sim, "TENT-2P");
+  for (let i = 0; i < 60; i++) {
+    sim.tick();
+    if (sim.snapshot().store["TENT-2P"] > 0) L.order(sim, "TENT-2P");
+  }
+  const s = drain(sim);
+  assert.deepEqual(L.oversold(), [], "the store re-offered units that were already sold");
+  assert.equal(s.stats.oversell, 0);
+  assert.equal(s.erp["TENT-2P"], 0);
+  assert.equal(s.store["TENT-2P"], 0);
+});
+
+test("property: duplicates, malformed events and 30-tick outages never oversell (independent ledger)", () => {
+  for (const seed of [3, 17, 29, 41, 53]) {
+    const sim = createSim(seed);
+    const L = ledger();
+    let soldOutSeen = false;
+    for (let i = 0; i < 700; i++) {
+      if (i % 5 < 4) L.order(sim); // a busy shop: 4 orders every 5 ticks
+      sim.tick();
+      if (SKUS.some((k) => sim.snapshot().store[k] === 0)) soldOutSeen = true;
+      if (i % 45 === 20) sim.setErpDown(30);
+      if (i % 120 === 60) L.deliver(sim, 50);
+      if (i % 37 === 0) sim.duplicateLastWebhook();
+      if (i % 89 === 0) sim.injectMalformed();
+    }
+    const s = drain(sim, 400);
+    sim.reconcile();
+    const done = sim.snapshot();
+    assert.deepEqual(L.oversold(), [], `seed ${seed}`);
+    assert.equal(done.stats.oversell, 0, `seed ${seed}: engine counter`);
+    assert.deepEqual(done.store, done.erp, `seed ${seed}: store equals ERP after drain+reconcile`);
+    assert.ok(soldOutSeen, `seed ${seed}: stock actually ran out at least once`);
+    assert.ok(s.dlq.length >= 1, `seed ${seed}: malformed events were exercised`);
+  }
+});
+
+test("a corrupted count on a sold-out SKU oversells, the counter shows it, and the ERP records it", () => {
+  const sim = createSim(10);
+  const L = ledger();
+  for (let i = 0; i < 40; i++) L.order(sim, "LANTERN");
+  drain(sim);
+  sim.injectDrift("LANTERN");
+  assert.ok(L.order(sim, "LANTERN"), "the corrupted store count let a shopper buy");
+  const s = drain(sim);
+  assert.deepEqual(L.oversold(), ["LANTERN: 41 sold of 40"]);
+  assert.equal(s.stats.oversell, 1, "the engine's counter agrees with the ledger");
+  assert.equal(s.erp["LANTERN"], -1, "the ERP shows the oversold unit instead of clamping it away");
+  assert.equal(s.store["LANTERN"], 0, "the store never shows negative stock");
+  sim.reconcile();
+  assert.ok(sim.snapshot().report.some((l) => /LANTERN.*oversold/.test(l)), sim.snapshot().report.join(" | "));
+});
+
+test("an oversell while orders are still queued is counted against available stock, not raw on-hand", () => {
+  // LANTERN down to 1 unit; the ERP goes down; the last unit sells (its order waits in the
+  // queue, so on-hand still reads 1); then a corrupted count lets one more shopper buy.
+  const sim = createSim(12);
+  const L = ledger();
+  for (let i = 0; i < 39; i++) L.order(sim, "LANTERN");
+  drain(sim);
+  sim.setErpDown(15);
+  L.order(sim, "LANTERN");
+  sim.tick();
+  assert.equal(sim.snapshot().erp["LANTERN"], 1, "on-hand hasn't absorbed the queued order yet");
+  sim.injectDrift("LANTERN");
+  assert.ok(L.order(sim, "LANTERN"));
+  assert.deepEqual(L.oversold(), ["LANTERN: 41 sold of 40"]);
+  assert.equal(sim.snapshot().stats.oversell, 1, "counted at the sale, though on-hand still read 1");
+  const s = drain(sim);
+  assert.equal(s.erp["LANTERN"], -1);
+});
+
+test("a malformed event is dead-lettered by validation and the healthy event behind it still applies in the same tick", () => {
+  const sim = createSim(11);
+  sim.injectMalformed();
+  assert.equal(sim.snapshot().queueDepth, 1, "the malformed event arrives like any other: on the queue");
+  assert.equal(sim.snapshot().dlq.length, 0);
+  sim.customerOrder("STOVE-MINI");
+  sim.tick();
+  const s = sim.snapshot();
+  assert.equal(s.dlq.length, 1);
+  assert.match(s.dlq[0].reason, /refused at validation/);
+  assert.equal(s.stats.processed, 1);
+  assert.equal(s.erp["STOVE-MINI"], 39);
+  assert.equal(s.queueDepth, 0, "nothing malformed is left retrying in the queue");
+});

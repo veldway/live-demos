@@ -6,7 +6,7 @@ free infrastructure so prospects can try the engineering, not just read about it
 | Demo | Live URL | What it shows |
 |---|---|---|
 | [Lead Triage, Live](triage/) | https://veldway-demo-triage.veldway.workers.dev | Deterministic rules score an inbound lead (every point traceable); a model drafts the summary + reply; hostile input is quarantined and never reaches the model. |
-| [Store↔ERP Sync, Running](sync/) | https://veldway-demo-sync.veldway.workers.dev | Our Shopify↔ERP inventory-sync reference design as a live simulation: break it with duplicate webhooks, ERP outages, malformed events and corrupted counts — idempotency, rate-budget batching, outage queueing and nightly reconciliation keep oversells at zero. |
+| [Store↔ERP Sync, Running](sync/) | https://veldway-demo-sync.veldway.workers.dev | Our Shopify↔ERP inventory-sync reference design as a live simulation: break it with duplicate webhooks, ERP outages, malformed events and corrupted counts. Idempotency, available-to-sell targets, rate-budget batching and outage queueing mean duplicates and outages never oversell; a corrupted count can, and the nightly reconciliation finds it. |
 
 **Honesty labeling:** these are internal builds running on sample data — not client
 projects, and never presented as client results. Each page states exactly what is real
@@ -35,12 +35,16 @@ Deploy: `wrangler deploy -c triage/wrangler.jsonc` (Cloudflare account with AI +
 - `sync/src/sim.js` — a pure, seed-deterministic engine implementing the design's own
   rules: receipt is not processing (webhooks only enqueue); idempotency keys make
   at-least-once delivery safe; per-SKU absolute updates are flushed under a per-tick
-  rate budget; an ERP outage ages events with backoff instead of dropping them; malformed
-  events dead-letter without stopping the batch; nightly reconciliation fixes drift on
-  settled SKUs and says which in-flight SKUs it skipped.
+  rate budget, and each one sets the store to available-to-sell (ERP on-hand minus orders
+  the ERP hasn't applied yet), so a recovering outage never re-offers sold units; an ERP
+  outage ages events with backoff instead of dropping them; malformed events fail
+  validation and dead-letter without stopping the batch; nightly reconciliation fixes
+  drift on settled SKUs, says which in-flight SKUs it skipped, and reports any SKU the ERP
+  shows below zero (oversold) instead of clamping it away.
 - The browser runs the exact file the tests run (`/sim.js` is a build copy pinned
-  byte-identical by a test). `sync/test/sim.test.js`: 12 invariant tests including a
-  3-seed, 600-operation property run that must end with zero oversells and both systems
-  equal.
+  byte-identical by a test). `sync/test/sim.test.js`: 17 invariant tests, including two
+  property runs (3 seeds × 600 operations; 5 seeds × 700 operations with 30-tick outages)
+  in which every sale is checked against an independent stock ledger, and a regression test
+  for the outage-recovery oversell the first version had.
 - **What's simulated:** the store and the ERP (in-memory, fictional SKUs). **What's real:**
   every algorithm above. No backend state, no KV, no AI — $0 and nothing to exhaust.

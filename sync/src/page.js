@@ -52,7 +52,7 @@ export const HTML = `<!doctype html>
 <header>
   <p class="eyebrow">Veldway · reference design, running</p>
   <h1>“Our store and our warehouse disagree.”</h1>
-  <p class="lede">This is our Shopify↔ERP sync design as a live simulation: the store and ERP are simulated, the algorithms are real. Break things with the buttons — duplicates, outages, corrupted counts — and watch the oversell counter stay at zero.</p>
+  <p class="lede">This is our Shopify↔ERP sync design as a live simulation: the store and ERP are simulated, the algorithms are real. Break things with the buttons. Duplicate webhooks, ERP outages and malformed events never oversell; a corrupted store count can, until the nightly reconciliation finds it — which is why it runs.</p>
 </header>
 
 <div class="controls" aria-label="Simulation controls">
@@ -98,8 +98,9 @@ export const HTML = `<!doctype html>
 
 <div class="honest">
   <strong>What this is:</strong> a Veldway reference design running as a deterministic simulation — the store and ERP are
-  simulated; the idempotency, batching, outage-queueing and reconciliation logic is real and unit-tested (the oversell
-  counter is pinned at zero by a property test, not by hiding failures). Not a client project.
+  simulated; the idempotency, available-to-sell targets, batching, outage-queueing, validation and reconciliation logic is
+  real and unit-tested (a property test checks every sale against an independent stock ledger, not against the engine's
+  own counter, and the ERP is allowed to go below zero so an oversell can't be hidden). Not a client project.
   Design write-up: <a href="https://veldway.com/work/shopify-erp-inventory-sync" rel="noopener">veldway.com/work/shopify-erp-inventory-sync</a> ·
   Source: <a href="https://github.com/veldway/live-demos" rel="noopener">github.com/veldway/live-demos</a> ·
   <a href="https://veldway.com" rel="noopener">veldway.com</a>
@@ -141,7 +142,8 @@ function render() {
     const tr = document.createElement("tr");
     const erp = s.erp[sku], st = s.store[sku];
     let state, cls;
-    if (erp === st) { state = "in sync"; cls = "sync-ok"; }
+    if (erp < 0) { state = "OVERSOLD " + (-erp); cls = "sync-drift"; }
+    else if (erp === st) { state = "in sync"; cls = "sync-ok"; }
     else if (s.inFlight.includes(sku)) { state = "syncing…"; cls = "sync-pending"; }
     else { state = "DRIFT"; cls = "sync-drift"; }
     tr.appendChild(cell(sku));

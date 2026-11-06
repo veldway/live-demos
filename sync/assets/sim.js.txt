@@ -5,12 +5,16 @@
  *   - idempotency keys: at-least-once delivery never double-applies
  *   - per-SKU debounced, rate-budget batching toward the store
  *   - ERP outage = events age on the queue with backoff; nothing is dropped
- *   - malformed events go to a dead-letter queue; the batch survives
+ *   - malformed events fail validation and go to a dead-letter queue; the
+ *     batch survives
  *   - nightly reconciliation compares full stock state, fixes drift, reports
  *
  * Direction of truth (as in the design): the ERP owns stock; the store owns
  * orders. The store decrements its own view at purchase (as Shopify does);
- * ERP-side changes flow to the store as absolute inventory targets.
+ * ERP-side changes flow to the store as absolute inventory targets. The target
+ * is AVAILABLE-TO-SELL: the ERP's on-hand minus orders the ERP hasn't absorbed
+ * yet. Pushing raw on-hand while orders are still queued (after an outage)
+ * would re-offer units that are already sold.
  *
  * Pure and deterministic under a seed — the UI and the test suite drive the
  * same engine.
@@ -95,11 +99,12 @@ export function createSim(seed = 42) {
       logEvent({ id: "-", type: "order_attempt", sku: pick, status: "rejected (shown sold out)" });
       return null;
     }
+    const available = (erp.get(pick) ?? 0) - queuedOrderQty(pick);
     store.set(pick, shown - 1);
     state.stats.ordersAccepted += 1;
-    if ((erp.get(pick) ?? 0) <= 0) {
+    if (available <= 0) {
       state.stats.oversell += 1;
-      logEvent({ id: "-", type: "order_attempt", sku: pick, status: "OVERSOLD (ERP was empty)" });
+      logEvent({ id: "-", type: "order_attempt", sku: pick, status: "OVERSOLD (nothing left to sell)" });
     }
     return enqueue("order_created", pick, 1);
   }
@@ -122,10 +127,13 @@ export function createSim(seed = 42) {
     return copy;
   }
 
+  /** A webhook with no usable SKU or quantity: it arrives on the queue like any other. */
   function injectMalformed() {
-    const id = `E-${state.nextEventId++}`;
-    state.dlq.push({ id, reason: "missing sku/qty — refused at validation", tick: state.tick });
-    logEvent({ id, type: "stock_changed", sku: "?", status: "DEAD-LETTERED (malformed)" });
+    return enqueue("stock_changed", "?", Number.NaN);
+  }
+
+  function isValid(event) {
+    return SKUS.includes(event.sku) && Number.isInteger(event.qty) && event.qty > 0;
   }
 
   function setErpDown(ticks = 30) {
@@ -134,11 +142,29 @@ export function createSim(seed = 42) {
   }
 
   /** Simulated future-developer mistake: the store view is silently corrupted. */
-  function injectDrift() {
-    const sku = SKUS[Math.floor(rng() * SKUS.length)];
+  function injectDrift(target) {
+    const sku = SKUS.includes(target) ? target : SKUS[Math.floor(rng() * SKUS.length)];
     store.set(sku, (store.get(sku) ?? 0) + 7);
     logEvent({ id: "-", type: "drift", sku, status: "store count silently corrupted (+7)" });
     return sku;
+  }
+
+  /** Units of a SKU sold in the store whose orders the ERP hasn't applied yet (once per key). */
+  function queuedOrderQty(sku) {
+    const keys = new Set();
+    let n = 0;
+    for (const e of state.queue) {
+      if (e.type !== "order_created" || e.sku !== sku) continue;
+      if (state.processedKeys.has(e.idKey) || keys.has(e.idKey)) continue;
+      keys.add(e.idKey);
+      n += e.qty;
+    }
+    return n;
+  }
+
+  /** What the store may offer: ERP on-hand minus orders still on their way to the ERP. */
+  function availableToSell(sku) {
+    return Math.max(0, (erp.get(sku) ?? 0) - queuedOrderQty(sku));
   }
 
   /** SKUs whose sync is still in flight (queued events or a pending store update). */
@@ -155,17 +181,22 @@ export function createSim(seed = 42) {
     state.stats.reconciliationsRun += 1;
     const findings = [];
     const skipped = inFlightSkus();
+    const oversold = [];
     for (const sku of SKUS) {
       if (skipped.includes(sku)) continue;
-      const truth = erp.get(sku) ?? 0;
+      const truth = availableToSell(sku);
       const shown = store.get(sku) ?? 0;
       if (truth !== shown) {
         findings.push({ sku, erp: truth, store: shown });
         store.set(sku, truth);
         state.stats.driftFound += 1;
       }
+      if ((erp.get(sku) ?? 0) < 0) oversold.push(sku);
     }
-    const lines = findings.map((f) => `drift on ${f.sku}: store showed ${f.store}, ERP truth ${f.erp} — fixed`);
+    const lines = findings.map((f) => `drift on ${f.sku}: store showed ${f.store}, ERP says ${f.erp} available — fixed`);
+    for (const sku of oversold) {
+      lines.push(`${sku} oversold by ${-erp.get(sku)} — the ERP is below zero; a person contacts those customers`);
+    }
     if (skipped.length) {
       lines.push(`${skipped.length} SKU(s) skipped — sync still in flight (${skipped.join(", ")}); re-run after the queue drains`);
     }
@@ -182,6 +213,11 @@ export function createSim(seed = 42) {
         remaining.push(event);
         continue;
       }
+      if (!isValid(event)) {
+        state.dlq.push({ id: event.id, reason: "missing or unknown sku / bad qty — refused at validation", tick: state.tick });
+        logEvent({ id: event.id, type: event.type, sku: event.sku, status: "DEAD-LETTERED (malformed)" });
+        continue;
+      }
       if (state.processedKeys.has(event.idKey)) {
         state.stats.duplicatesIgnored += 1;
         logEvent({ id: event.id, type: event.type, sku: event.sku, status: "ignored (idempotency key seen)" });
@@ -195,10 +231,11 @@ export function createSim(seed = 42) {
         continue;
       }
       if (event.type === "order_created") {
-        erp.set(event.sku, Math.max(0, (erp.get(event.sku) ?? 0) - event.qty));
+        // No clamp at zero: an ERP below zero is an oversell, and hiding it would hide the bug.
+        erp.set(event.sku, (erp.get(event.sku) ?? 0) - event.qty);
         state.stats.erpDocs += 1;
       }
-      // Both event types leave the store view to the batcher: it syncs to ERP truth.
+      // Both event types leave the store view to the batcher: it syncs to available-to-sell.
       state.pendingTargets.set(event.sku, true);
       state.processedKeys.add(event.idKey);
       state.stats.processed += 1;
@@ -214,10 +251,11 @@ export function createSim(seed = 42) {
     for (const sku of [...state.pendingTargets.keys()]) {
       if (budget === 0) break;
       state.pendingTargets.delete(sku);
-      store.set(sku, erp.get(sku) ?? 0);
+      const target = availableToSell(sku);
+      store.set(sku, target);
       state.stats.storeUpdateCalls += 1;
       budget -= 1;
-      logEvent({ id: "-", type: "store_update", sku, status: `store set to ERP truth (${erp.get(sku)})` });
+      logEvent({ id: "-", type: "store_update", sku, status: `store set to available (${target})` });
     }
   }
 
